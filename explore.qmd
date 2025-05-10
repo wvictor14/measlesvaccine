@@ -1,0 +1,265 @@
+---
+format:
+  html:
+    embed-resources: true
+    fig-height: 5
+    fig-width: 8
+    fig-dpi: 300
+    toc: true
+    toc-expand: 3
+    toc-depth: 4
+    toc-location: left
+execute:
+  keep-md: false
+  cache: false
+date: "`r Sys.Date()`"
+editor: source
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r library}
+#| echo: false
+#| message: false
+library(dplyr)
+library(glue)
+library(readr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(forcats)
+library(reactable)
+library(gt)
+library(stringr)
+source('R/theme.R')
+theme_set(theme_custom())
+.data_global <- readr::read_csv('https://raw.githubusercontent.com/fbranda/measles/refs/heads/main/Measles_Global.csv')
+.data_europe <- readr::read_csv('https://raw.githubusercontent.com/fbranda/measles/refs/heads/main/Measles_Europe.csv')
+
+countries_of_interest <- c(
+  'Canada',
+  'United States of America', 'United Kingdom of Great Britain and Northern Ireland', 'Germany')
+reactable <- function(...) {
+  reactable::reactable(
+    pagination = FALSE,
+    searchable = TRUE,
+    ...
+  )
+}
+```
+
+
+Example Topics
+
+What is the growth rate of measles cases in the US vs Europe?
+
+Are there particular counties or states at risk due to low vaccination rates?
+
+How are vaccination rates changing over time?
+
+What is your projection for the number of measles cases (and complications) in 2026?
+
+# Europe vs global
+
+growth rate
+
+```{r}
+.data_global |> glimpse()
+.data_global |> count(Country)
+.data_global_tidied <- .data_global |> 
+  pivot_longer(
+    any_of(month.name),
+    names_to = 'month',
+    values_to = 'count'
+  )  |> 
+  mutate(country_region = glue("{Country} - {Region}"))
+
+.data_global_tidied_summarized <- .data_global_tidied |> 
+  
+  summarize(.by = c(Year, Country), count = sum(count, na.rm = TRUE)) 
+.data_global_tidied_summarized |> 
+  filter(Country %in% c('Canada', 'United States of America', 'Europe')) |> 
+  ggplot(aes(x = Year, y = count, color = Country)) +
+  geom_line() #+
+#  guides(color = 'none')
+
+
+.data_europe |> 
+  glimpse()
+
+.data_europe |>  count(HealthTopic, Population, Indicator)
+.data_europe |>
+  filter(Indicator == 'Reported confirmed cases') |> 
+  summarize(.by = Time, count = sum(NumValue, na.rm = TRUE)) |> 
+  mutate(Country = 'Europe') |>
+  rename(Year = Time) |> 
+  full_join(
+    .data_global_tidied_summarized |> 
+      filter(Country %in% c('Canada', 'United States of America', 'Europe'))) |> 
+  ggplot(aes(x = Year, y = count, color = Country)) +
+  geom_line() #+
+#  guides(color = 'none')
+```
+
+```{r}
+
+europe_countries <- .data_europe |>  pull(RegionName) |> unique()
+setdiff(europe_countries, .data_global_tidied_summarized$Country)
+
+.data_global_tidied_summarized |> 
+  filter(
+    Country %in% europe_countries |
+      str_detect(Country, 'United Kingdom') |
+      str_detect(Country, 'Netherlands') |
+      Country %in% c('Canada', 'United States of America', 'Mexico')
+  ) |>  
+  mutate(region = case_when(
+    
+    
+    Country %in% europe_countries |
+      str_detect(Country, 'United Kingdom') |
+      str_detect(Country, 'Netherlands')  ~ 'Europe',
+    .default = Country
+  )) |> 
+  
+  summarize(.by = c(Year, region), count = sum(count, na.rm = TRUE)) |> 
+  ggplot(aes(x = Year, y = count, color = region)) +
+  geom_line() #+
+
+```
+
+
+It seems that there is much more measles in Europe compared to USA. It is difficult
+to interprety without adjusting for population numbers though.
+
+```{r}
+
+.data_global_tidied_summarized |> 
+  filter(
+    Country %in% europe_countries |
+      str_detect(Country, 'United Kingdom') |
+      str_detect(Country, 'Netherlands') |
+      Country %in% c('Canada', 'United States of America', 'Mexico')
+  ) |>  
+  mutate(region = case_when(
+    
+    
+    Country %in% europe_countries |
+      str_detect(Country, 'United Kingdom') |
+      str_detect(Country, 'Netherlands')  ~ 'Europe',
+    .default = Country
+  )) |> 
+  
+  ggplot(aes(x = Country, y = count, fill = as.factor(Year))) +
+  geom_bar(stat = 'identity', position = position_dodge()) 
+
+
+.data_global_tidied |> 
+  mutate(date = glue("{Year}-{month}-01") |>  lubridate::ymd()) |> 
+  filter(
+    Country %in% c(
+      'Canada',
+      'United States of America', 'United Kingdom of Great Britain and Northern Ireland', 'Germany')
+  ) |> 
+  ggplot(aes(x = date, y = count, color = Country)) +
+  geom_line() +
+  scale_x_date(breaks = scales::pretty_breaks(n = 10))
+
+```
+
+
+# vaccination rate
+
+1st or 2nd dose?
+
+```{r}
+.data_vac_rate <- readr::read_csv('https://raw.githubusercontent.com/fbranda/measles/refs/heads/main/Measles_vaccination_coverage_Global.csv')
+.data_vac_rate |>  glimpse()
+.data_vac_rate |> count(Antigen)
+.data_vac_rate |> 
+  filter(Country %in% countries_of_interest) |> 
+  filter(Antigen == 'MCV1') |> 
+  ggplot(aes(x = Year, y = Coverage, color = Country)) +
+  geom_line()
+```
+
+missing usa data
+
+# USA-specific
+
+```{r}
+data_usa_coverage <- readr::read_csv('https://raw.githubusercontent.com/fbranda/measles/refs/heads/main/USA/data/all/measles-USA-by-mmr-coverage.csv')
+data_usa_all_by_year <- readr::read_csv('https://github.com/fbranda/measles/blob/main/USA/data/all/measles-USA-by-year.csv')
+
+data_usa_by_state <- readr::read_csv('https://raw.githubusercontent.com/fbranda/measles/refs/heads/main/USA/data/2025/measles-USA-by-state-timeline.csv')
+
+data_usa_coverage |> count(survey_type)
+
+# convert
+data_usa_coverage <- data_usa_coverage |> 
+  mutate(coverage = str_remove(estimate_pct,'%') |> as.numeric(),
+         coverage = coverage/100) |> 
+  mutate(.by = geography,
+         diff = max(coverage, na.rm = TRUE) - min(coverage, na.rm = TRUE))
+data_usa_coverage |>
+  distinct(geography, diff) |> 
+  reactable()
+data_usa_coverage |> 
+  reactable()
+
+# filter to top range
+data_usa_coverage |> 
+  ggplot(aes(x = school_year, y = coverage)) + 
+  geom_line(aes(group = geography), color = 'grey') +
+  geom_line(data = data_usa_coverage |> filter(diff > 0.1),
+            aes(group = geography, color = geography), linewidth = 1.5) +
+  scale_y_continuous(labels = scales::percent) +
+  paletteer::scale_color_paletteer_d('ggsci::default_igv')
+
+# to those states that have case counts in 2025
+p <- data_usa_coverage |> 
+  ggplot(aes(x = school_year, y = coverage)) + 
+  geom_line(aes(group = geography), color = 'grey') +
+  geom_line(
+    data = data_usa_coverage |> 
+      filter(geography %in% data_usa_by_state$state_name),
+    aes(group = geography, color = geography), linewidth = 1.5) +
+  scale_y_continuous(labels = scales::percent) +
+  paletteer::scale_color_paletteer_d('ggsci::default_igv')  ; 
+plotly::ggplotly(p)
+```
+
+## usa MMR rate over year
+mean over states
+```{r}
+get_stats <- function(x) {
+  tibble(mean = mean(x, na.rm = TRUE),
+         median = median(x, na.rm = TRUE))
+}
+data_usa_coverage |> 
+  reframe(
+    .by = c(school_year), 
+    get_stats(coverage),
+    n = sum(!is.na(coverage))
+  ) |> 
+  pivot_longer(c(mean, median), names_to = 'stat') |> 
+  ggplot(aes(x = school_year, y = value, group = stat, color = stat)) +
+  geom_line() +
+  geom_point() +
+  scale_y_continuous(labels = scales::percent, expand = expansion(0.1, 0.01))  
+
+```
+
+## 2025 cases
+
+```{r}
+data_usa_by_state |> 
+  ggplot(aes(x = report_date, y = cases_count, color = state_name)) +
+  geom_line() +
+  geom_point(aes()) +
+  paletteer::scale_color_paletteer_d('ggsci::default_igv', guide = 'none') +
+  facet_wrap(vars(state_name))+
+  theme(panel.border = element_rect(fill = NA))
+```
+
